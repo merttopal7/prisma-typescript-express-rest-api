@@ -14,7 +14,11 @@ const PORT = process.env.PORT || 8787
 app.use(errorHandlerBegin)
 
 
-app.get('/', async (req: Request, res: Response) => res.handle(()=>res.status(200).json({message:`Application Working...`})))
+app.get('/', async (req: Request, res: Response) => res.handle(
+    () => {
+        return res.status(200).json({message:`Application Working...`})
+    }
+))
 
 app.use(routes)
 
