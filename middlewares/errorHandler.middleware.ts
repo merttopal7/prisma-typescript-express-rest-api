@@ -13,7 +13,7 @@ export const errorHandlerBegin = (req:Request,res:Response,next:Next) => {
         return next(error)
       }
     };
-    next();
+    next()
 }
 
 export const errorHandlerEnd = (error:any, req:Request, res:Response) => {
