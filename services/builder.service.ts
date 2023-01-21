@@ -12,8 +12,17 @@ const errorHandler = async (query:object|boolean=false,main:Function) => {
     }
 }
 
-const builder = (model:any) => {
+const builder = (model:any,schema:any|boolean=false) => {
     return {
+        validate(obj:any|boolean=false) {
+            if(!obj || !schema) return
+            let object :any = {}
+            Object.keys(schema).forEach(a => {
+                if(typeof obj[a] != schema[a]) throw new Error(`[ValidationError] Type is not valid for [${a}][${schema[a]}] !`)
+                object[a] = obj[a]
+            })
+            return object
+        },
         async find(query:object|boolean=false) {
             if(!query) return
             return await errorHandler(query,model.findUnique)

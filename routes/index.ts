@@ -1,10 +1,13 @@
 import { Router } from "express";
-import { all as getPosts, single as getPost, create as createPost } from "../controller/post.controller";
+import { all as getUsers, single as getUser, create as createUser, del as deleteUser } from "../controller/user.controller";
+
 const routes = Router()
-
-
-routes.get('/post',getPosts)
-routes.get('/post/:id',getPost)
-routes.post('/post',createPost)
+for(let i = 0;i<10;i++) {
+    routes.get(`/count/${i}`,getUsers)
+}
+routes.get('/user',getUsers)
+routes.get('/user/:id',getUser)
+routes.post('/user',createUser)
+routes.delete('/user/:id',deleteUser)
 
 export default routes

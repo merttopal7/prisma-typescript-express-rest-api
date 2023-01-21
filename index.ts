@@ -4,14 +4,14 @@ import express from 'express'
 import { Express, Request, Response, Next } from './utils/types'
 import routes from './routes'
 import bodyParser from "body-parser"
-import {errorHandlerBegin,errorHandlerEnd} from './middlewares/errorHandler.middleware'
+import errorHandler from './middlewares/errorHandler.middleware'
 
 const app: Express = express()
 app.use(bodyParser.json())
 app.use(bodyParser.urlencoded({ extended: true }))
 
 const PORT = process.env.PORT || 8787
-app.use(errorHandlerBegin)
+app.use(errorHandler)
 
 
 app.get('/', async (req: Request, res: Response) => res.handle(
@@ -21,7 +21,5 @@ app.get('/', async (req: Request, res: Response) => res.handle(
 ))
 
 app.use(routes)
-
-app.use(errorHandlerEnd)
 
 app.listen(PORT, () => console.log(`⭐: Server is running at ${PORT} ✔️`))
