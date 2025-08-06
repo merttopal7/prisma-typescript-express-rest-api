@@ -1,6 +1,6 @@
-import { Express as exp, Request as req, Response as res,NextFunction } from 'express'
+import { Express as ExpressExpress, Request as ExpressRequest, Response as ExpressResponse, NextFunction } from 'express';
 
-export type Response = res|any
-export type Request = req
-export type Express = exp
-export type Next = NextFunction
+export type Request = ExpressRequest;
+export type Response = ExpressResponse;
+export type Express = ExpressExpress;
+export type Next = NextFunction;

@@ -1,13 +1,20 @@
 import { Router } from "express";
+import { login, logout, refresh, register } from "../controller/auth.controller";
 import { all as getUsers, single as getUser, create as createUser, del as deleteUser } from "../controller/user.controller";
+import { authenticate } from "../middlewares/auth.middleware";
 
 const routes = Router()
-for(let i = 0;i<10;i++) {
-    routes.get(`/count/${i}`,getUsers)
-}
-routes.get('/user',getUsers)
-routes.get('/user/:id',getUser)
-routes.post('/user',createUser)
-routes.delete('/user/:id',deleteUser)
+routes.post('/register', register)
+routes.post('/login', login)
+routes.post('/refresh', refresh)
+routes.post('/logout', logout)
+
+
+routes.use(authenticate)
+routes.get('/users', getUsers)
+routes.get('/users/:id', getUser)
+routes.post('/users', createUser)
+routes.delete('/users/:id', deleteUser)
+
 
 export default routes

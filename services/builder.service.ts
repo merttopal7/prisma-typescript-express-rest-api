@@ -1,60 +1,69 @@
-const errorHandler = async (query:object|boolean=false,main:Function) => {
-    let errorMessage :string|undefined = ""
-    const result = await main(query).catch((err:Error) => {
-        console.log("[DatabaseError]:",err.message)
-        errorMessage=err.message.split(`prisma`).join(``).split(`\n`).join(` `)
-        return false
+import fs from 'fs';
+import path from 'path';
+import { createPrismaSchemaBuilder } from '@mrleebo/prisma-ast';
+const schemaContent = fs.readFileSync(path.join('prisma', 'schema.prisma'), 'utf-8');
+const _builder = createPrismaSchemaBuilder(schemaContent);
+
+const prismaToTS: Record<string, string> = {
+    Int: 'number',
+    BigInt: 'number',
+    Float: 'number',
+    Decimal: 'number',
+    String: 'string',
+    Boolean: 'boolean',
+    DateTime: 'string',
+    Json: 'any',
+    Bytes: 'any'
+};
+
+const createValidationsForSchema = (schemaName: string) => {
+    const product = _builder.findByType('model', { name: schemaName });
+    const validation: any = {};
+    product?.properties.forEach((property: any) => {
+        const isId = (property.attributes ?? []).find((attr: any) => attr.name == "id");
+        if (!isId && prismaToTS[property.fieldType]) validation[property.name] = {
+            type: prismaToTS[property.fieldType],
+            optional: property.optional
+        }
     })
+    return validation
+}
+
+const errorHandler = async <T>(prom: T) => {
+    let errorMessage: string | undefined = ""
+    let result; 
+    let error = false;
+    try {
+        result = await prom;
+    } catch (err: any) {
+        error = true;
+        console.log("[DatabaseError]:", err.message)
+        errorMessage = err.message.split(`prisma`).join(``).split(`\n`).pop()
+    }
     return {
         data: result || undefined,
-        error: !result,
-        errorMessage: !result ? errorMessage : undefined
+        error,
+        errorMessage: error ? errorMessage : undefined
     }
 }
 
-const builder = (model:any,schema:any|boolean=false) => {
+export const query = async <T>(queryPromise: T) => await errorHandler(queryPromise as T)
+
+export const builder = <T>(model: any) => {
     return {
-        validate(obj:any|boolean=false) {
-            if(!obj || !schema) return
-            let object :any = {}
+        validate(obj: any | boolean = false) {
+            const schema = createValidationsForSchema(model.name);
+            if (!obj || !schema) return;
+            let object: any = {}
             Object.keys(schema).forEach(a => {
-                if(typeof obj[a] != schema[a]) throw new Error(`[ValidationError] Type is not valid for [${a}][${schema[a]}] !`)
+                if (typeof obj[a] != schema[a].type) {
+                    if (!(schema[a].optional && typeof obj[a] == "undefined")) throw new Error(`[ValidationError] ${typeof obj[a]} type is not valid for [${a}][${schema[a].type}] !`)
+                    } else
                 object[a] = obj[a]
             })
             return object
         },
-        async find(query:object|boolean=false) {
-            if(!query) return
-            return await errorHandler(query,model.findUnique)
-        },
-        async findMany(query:object|boolean=false) {
-            if(!query) return errorHandler(false,model.findMany)
-            return await errorHandler(query,model.findMany)
-        },
-        async create(query:object|boolean=false) {
-            if(!query) return
-            return await errorHandler(query,model.create)
-        },
-        async createMany(query:object|boolean=false) {
-            if(!query) return
-            return await errorHandler(query,model.createMany)
-        },
-        async update(query:object|boolean=false) {
-            if(!query) return
-            return await errorHandler(query,model.update)
-        },
-        async updateMany(query:object|boolean=false) {
-            if(!query) return
-            return await errorHandler(query,model.updateMany)
-        },
-        async delete(query:object|boolean=false) {
-            if(!query) return
-            return await errorHandler(query,model.delete)
-        },
-        async deleteMany(query:object|boolean=false) {
-            if(!query) return
-            return await errorHandler(query,model.deleteMany)
-        }
+        prisma: model as T,
+        query
     }
 }
-export default builder
