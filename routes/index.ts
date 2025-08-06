@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { login, logout, refresh, register } from "../controller/auth.controller";
+import { findById, find, models } from "../controller/dynamic.controller";
 import { all as getUsers, single as getUser, create as createUser, del as deleteUser } from "../controller/user.controller";
 import { authenticate } from "../middlewares/auth.middleware";
 
@@ -9,6 +10,10 @@ routes.post('/login', login)
 routes.post('/refresh', refresh)
 routes.post('/logout', logout)
 
+routes.get("/items", models);
+routes.get("/items/:model", find);
+routes.post("/items/:model", find);
+routes.get("/items/:model/:id", findById);
 
 routes.use(authenticate)
 routes.get('/users', getUsers)
