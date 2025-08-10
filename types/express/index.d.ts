@@ -7,6 +7,7 @@ declare global {
             user?: {
                 userId: number;
             };
+            file?: any;
         }
     }
 }

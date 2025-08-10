@@ -9,10 +9,10 @@ export const login = (req: Request, res: Response) =>
         const userQuery = await User.query(User.prisma.findUnique({ where: { email } }));
         if (userQuery.error) return res.status(401).json({ error: userQuery.error, message: userQuery.errorMessage });
         const user = userQuery.data;
-        if (!user) return res.status(401).json({ error: userQuery.error, message: userQuery.errorMessage });
+        if (!user) return res.status(401).json({ error: true, errorMessage: "Invalid Credentials!" });
 
         const isValid = await bcrypt.compare(password, user.password);
-        if (!isValid) return res.status(401).json({ message: 'Invalid Credentials!' });
+        if (!isValid) return res.status(401).json({ error: true, message: 'Invalid Credentials!' });
 
         const accessToken = signJwt({ userId: user.id }, process.env.JWT_SECRET_ACCESS!, process.env.JWT_ACCESS_EXPIRES_IN!);
         const refreshToken = signJwt({ userId: user.id }, process.env.JWT_SECRET_REFRESH!, process.env.JWT_REFRESH_EXPIRES_IN!);
@@ -24,7 +24,7 @@ export const login = (req: Request, res: Response) =>
                 sameSite: 'strict',
                 maxAge: 7 * 24 * 60 * 60 * 1000
             })
-            .json({ accessToken });
+            .json({ error: false, accessToken, tokenType: "Bearer" });
     })
 
 
@@ -35,7 +35,7 @@ export const register = (req: Request, res: Response) =>
 
         const existingUser = await User.query(User.prisma.findUnique({ where: { email } }));
         if (!existingUser.error && existingUser.data) {
-            return res.status(409).json({ message: 'Email is already taken.' });
+            return res.status(500).json({ error: true, errorMessage: 'Email is already taken.' });
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
@@ -60,7 +60,7 @@ export const register = (req: Request, res: Response) =>
                 sameSite: 'strict',
                 maxAge: 7 * 24 * 60 * 60 * 1000 // 7 gün
             })
-            .json({ accessToken });
+            .json({ error: false, accessToken, tokenType: "Bearer" });
     })
 
 export const refresh = (req: Request, res: Response) =>

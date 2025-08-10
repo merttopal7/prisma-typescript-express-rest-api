@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -17,31 +17,78 @@ model User {
   products  Product[]  @relation("UserProducts")
   orders    Order[]
   cart      Cart?
+  uploads   Upload[]   @relation("UserUploads")
 }
 
 model Role {
-  id    Int     @id @default(autoincrement())
-  name  String  @unique
-  users User[]
+  id          Int              @id @default(autoincrement())
+  name        String           @unique
+  users       User[]
+  permissions RolePermission[]
+}
+
+model RolePermission {
+  id        Int     @id @default(autoincrement())
+  roleId    Int
+  model     String 
+  canCreate Boolean @default(false)
+  canRead   Boolean @default(false)
+  canUpdate Boolean @default(false)
+  canDelete Boolean @default(false)
+
+  role      Role    @relation(fields: [roleId], references: [id])
+
+  @@unique([roleId, model]) // aynı role + model için tekrar eklenmesin
 }
 
 model Category {
-  id       Int       @id @default(autoincrement())
-  name     String    @unique
-  products Product[]
+  id          Int         @id @default(autoincrement())
+  name        String      @unique
+  slug        String      @unique
+  products    Product[]   @relation("ProductCategories")
+  parentId    Int?        
+  parent      Category?   @relation("CategoryChildren", fields: [parentId], references: [id])
+  children    Category[]  @relation("CategoryChildren")
+  uploadId    Int?
+  upload      Upload?     @relation("CategoryUpload", fields: [uploadId], references: [id])
 }
 
+
 model Product {
-  id          Int        @id @default(autoincrement())
+  id          Int         @id @default(autoincrement())
   name        String
   description String?
   price       Float
-  categoryId  Int
-  category    Category   @relation(fields: [categoryId], references: [id])
   ownerId     Int
-  owner       User       @relation("UserProducts", fields: [ownerId], references: [id])
+  owner       User        @relation("UserProducts", fields: [ownerId], references: [id])
   orders      Order[]
   cartItems   CartItem[]
+  categories  Category[]  @relation("ProductCategories")
+  photos      ProductPhoto[]
+  stock       Int         @default(0)
+}
+
+model ProductPhoto {
+  id        Int     @id @default(autoincrement())
+  uploadId  Int?
+  upload    Upload? @relation("ProductPhotoUpload", fields: [uploadId], references: [id])
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+
+model Upload {
+  id        Int      @id @default(autoincrement())
+  filename  String
+  mimetype  String
+  path      String
+  ownerId   Int
+  owner     User     @relation("UserUploads", fields: [ownerId], references: [id])
+  createdAt DateTime @default(now())
+
+  // Karşı ilişkiler
+  categoryPhotos Category[]    @relation("CategoryUpload")
+  productPhotos  ProductPhoto[] @relation("ProductPhotoUpload")
 }
 
 model Order {
@@ -68,5 +115,5 @@ model CartItem {
   cart      Cart    @relation(fields: [cartId], references: [id])
   product   Product @relation(fields: [productId], references: [id])
 
-  @@unique([cartId, productId]) // ensures no duplicate products per cart
+  @@unique([cartId, productId])
 }

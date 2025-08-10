@@ -1,7 +1,7 @@
 import express, { Request, Response, Router } from 'express';
 import { ParsedQs } from 'qs';
 import { Prisma } from '../models/base.models'
-const { prisma, query } = Prisma;
+const { prisma, query, buildValidation } = Prisma;
 
 type FilterQuery = ParsedQs | { [key: string]: any };
 
@@ -76,6 +76,13 @@ type PrismaWhereInput = {
     [key: string]: any;
 };
 
+
+type ModelName = keyof typeof prisma;
+
+function getDelegate<T extends ModelName>(model: T): (typeof prisma)[T] {
+    return prisma[model];
+}
+
 const parseSelectParam = (selectParam?: string, model?: string): object | undefined => {
     if (!selectParam) return undefined;
     const result: any = {};
@@ -83,16 +90,27 @@ const parseSelectParam = (selectParam?: string, model?: string): object | undefi
     const fields = selectParam.split(',').map(f => f.trim()).filter(Boolean);
 
     for (const field of fields) {
-        const parts = field.split('.');
-        if(parts.length > 1 && parts[0] === model) parts.shift();
+        let parts = field.split('.');
+
+        // Eğer başında model adı varsa kaldır
+        if (model && parts[0] === model) {
+            parts.shift();
+        }
+
         let current = result;
 
         parts.forEach((part, idx) => {
             if (idx === parts.length - 1) {
+                // Son parçadaysak true olarak işaretle
                 current[part] = true;
             } else {
-                current[part] = current[part] || {};
-                if (!current[part].select) current[part].select = {};
+                // İlişki var, select yapısı oluştur
+                if (!current[part]) {
+                    current[part] = { select: {} };
+                } else if (current[part] === true) {
+                    // Önceden true yazılmışsa, nesneye dönüştür
+                    current[part] = { select: {} };
+                }
                 current = current[part].select;
             }
         });
@@ -100,6 +118,7 @@ const parseSelectParam = (selectParam?: string, model?: string): object | undefi
 
     return result;
 };
+
 
 
 const parseIncludeParam = (includeParam?: string): object | undefined => {
@@ -313,9 +332,14 @@ export const findById = (req: Request, res: Response) =>
     req.handle(async () => {
         const model = req.params.model;
         const id = req.params.id;
-        
-        if (!(model in prisma)) {
-            return res.status(400).json({ error: true, errorMessage: `Model '${model}' not found.` });
+
+        const availableModels = getAvailableModels();
+        if (!availableModels.includes(model)) {
+            return res.status(400).json({
+                error: true,
+                errorMessage: `Model '${model}' not found.`,
+                availableModels
+            });
         }
 
         const parsedSelect = parseSelectParam(req.query?.select as string, model as string);
@@ -348,7 +372,8 @@ export const find = (req: Request, res: Response) =>
         if (!availableModels.includes(model)) {
             return res.status(400).json({
                 error: true,
-                errorMessage: `Model '${model}' not found. Available models: ${availableModels.join(', ')}`
+                errorMessage: `Model '${model}' not found.`,
+                availableModels
             });
         }
 
@@ -398,6 +423,83 @@ export const models = (req: Request, res: Response) =>
         });
     });
 
+export const post = (req: Request, res: Response) =>
+    req.handle(async () => {
+        const { model } = req.params;
+        const availableModels = getAvailableModels();
+        if (!availableModels.includes(model)) {
+            return res.status(400).json({
+                error: true,
+                errorMessage: `Model '${model}' not found.`,
+                availableModels
+            });
+        }
+        const delegate = getDelegate(model as ModelName) as any;
+        const build = buildValidation(delegate);
+        const validatedData = build.validate(req.body);
+        const postResult = await query(delegate.create({
+            data: validatedData
+        }))
+        return res.status(postResult.error ? 500 : 200).json({
+            ...postResult
+        })
+    })
+
+
+export const createData = (req: Request, res: Response) =>
+    req.handle(async () => {
+            // 1. Epin kategorisini oluştur
+            const epinCategory = await prisma.category.upsert({
+                where: { slug: 'epin' },
+                update: {},
+                create: {
+                    name: 'Epin',
+                    slug: 'epin',
+                },
+            });
+
+            // 2. Valorant kategorisini oluştur, parent olarak Epin'i ata
+            const valorantCategory = await prisma.category.upsert({
+                where: { slug: 'valorant' },
+                update: {},
+                create: {
+                    name: 'Valorant',
+                    slug: 'valorant',
+                    parentId: epinCategory.id,
+                },
+            });
+
+            // Ürün isimleri ve fiyatları (örnek fiyatlar verdim, sen değiştirebilirsin)
+            const productsData = [
+                { name: '100VP', price: 1 },
+                { name: '200VP', price: 2 },
+                { name: '500VP', price: 5 },
+                { name: '1000VP', price: 10 },
+            ];
+
+            // Örnek ownerId (varsa kendi kullanıcı ID'n ile değiştir)
+            const ownerId = 1; // Burayı gerçek user id ile değiştir
+
+            // Ürünleri oluştur ve her iki kategoriye bağla
+            for (const prod of productsData) {
+                // 3. Ürünü oluştur
+                const product = await prisma.product.create({
+                    data: {
+                        name: prod.name,
+                        price: prod.price,
+                        ownerId: ownerId,
+                        stock: 100, // örnek stok
+                        categories: {
+                            connect: [{ id: epinCategory.id }, { id: valorantCategory.id }],
+                        },
+                    },
+                });
+                console.log(`Ürün oluşturuldu: ${product.name}`);
+            }
+        return res.json({
+            ok: 1
+        })
+    })
 // Usage examples with TypeScript:
 /*
 Basic examples:
