@@ -1,12 +1,11 @@
 import express, { Request, Response, Router } from 'express';
-import { Prisma, User } from '../models/base.models'
 import { ParsedQs } from 'qs';
+import { Prisma } from '../models/base.models'
+const { prisma, query } = Prisma;
 
 type FilterQuery = ParsedQs | { [key: string]: any };
 
-const { prisma, query } = Prisma;
 
-// Type definitions
 interface FilterOperators {
     _eq?: any;
     _neq?: any;
@@ -70,7 +69,6 @@ interface ErrorResponse {
     message?: string;
 }
 
-// Type for Prisma where conditions
 type PrismaWhereInput = {
     AND?: PrismaWhereInput[];
     OR?: PrismaWhereInput[];
@@ -78,7 +76,59 @@ type PrismaWhereInput = {
     [key: string]: any;
 };
 
-// Helper function to convert filter operators to Prisma format
+const parseSelectParam = (selectParam?: string, model?: string): object | undefined => {
+    if (!selectParam) return undefined;
+    const result: any = {};
+
+    const fields = selectParam.split(',').map(f => f.trim()).filter(Boolean);
+
+    for (const field of fields) {
+        const parts = field.split('.');
+        if(parts.length > 1 && parts[0] === model) parts.shift();
+        let current = result;
+
+        parts.forEach((part, idx) => {
+            if (idx === parts.length - 1) {
+                current[part] = true;
+            } else {
+                current[part] = current[part] || {};
+                if (!current[part].select) current[part].select = {};
+                current = current[part].select;
+            }
+        });
+    }
+
+    return result;
+};
+
+
+const parseIncludeParam = (includeParam?: string): object | undefined => {
+    if (!includeParam) return undefined;
+
+    const result: any = {};
+    const includes = includeParam.split(',').map(s => s.trim()).filter(Boolean);
+
+    includes.forEach(item => {
+        const [relation, fields] = item.split('.'); // posts.id gibi
+        if (!fields || fields === '*') {
+            // Tüm alanlar dahil
+            result[relation] = true;
+        } else {
+            // Belirli alanları seç
+            const selectFields = fields.split('|').reduce((acc, f) => {
+                acc[f] = true;
+                return acc;
+            }, {} as Record<string, boolean>);
+
+            result[relation] = { select: selectFields };
+        }
+    });
+
+    return Object.keys(result).length > 0 ? result : undefined;
+};
+
+
+
 const convertOperatorToPrisma = (operator: keyof FilterOperators, value: any): any => {
     switch (operator) {
         case '_eq':
@@ -110,20 +160,17 @@ const convertOperatorToPrisma = (operator: keyof FilterOperators, value: any): a
     }
 };
 
-// Helper function to parse numbers
 const parseNumber = (value: any): number | any => {
     const num = Number(value);
     return isNaN(num) ? value : num;
 };
 
-// Helper function to parse boolean
 const parseBoolean = (value: any): boolean | any => {
     if (value === 'true') return true;
     if (value === 'false') return false;
     return value;
 };
 
-// Helper function to convert nested filter object to Prisma where clause
 const buildPrismaWhere = (filterObj: FilterCondition): PrismaWhereInput => {
     const where: PrismaWhereInput = {};
 
@@ -220,7 +267,6 @@ const buildPrismaWhere = (filterObj: FilterCondition): PrismaWhereInput => {
     return where;
 };
 
-// Helper function to parse query string into nested object
 const parseNestedQuery = (query: QueryParams): FilterCondition => {
     const result: FilterCondition = {};
 
@@ -255,8 +301,6 @@ const parseNestedQuery = (query: QueryParams): FilterCondition => {
     return result;
 };
 
-
-// Get available models from Prisma client
 const getAvailableModels = (): string[] => {
     return Object.keys(prisma).filter(key =>
         !key.startsWith('_') &&
@@ -269,17 +313,20 @@ export const findById = (req: Request, res: Response) =>
     req.handle(async () => {
         const model = req.params.model;
         const id = req.params.id;
-
+        
         if (!(model in prisma)) {
             return res.status(400).json({ error: true, errorMessage: `Model '${model}' not found.` });
         }
+
+        const parsedSelect = parseSelectParam(req.query?.select as string, model as string);
 
         const delegate = (prisma as any)[model];
 
         const data = await query(delegate.findUnique({
             where: {
                 id: isNaN(Number(id)) ? id : Number(id)
-            }
+            },
+            ...(parsedSelect ? { select: parsedSelect } : {})
         }));
 
         if (!data.data)
@@ -293,7 +340,9 @@ export const find = (req: Request, res: Response) =>
         const { model } = req.params;
         const method = req.method;
         const filterQuery: FilterQuery = method === 'GET' ? (req.query as ParsedQs) : (req.body as { [key: string]: any });
-        const { page = '1', limit = '10', sort, order = 'asc', filter } = filterQuery;
+        const { page = '1', limit = '10', sort, order = 'asc', filter, select, include } = filterQuery;
+
+        const parsedSelect = parseSelectParam(select as string, model as string);
 
         const availableModels = getAvailableModels();
         if (!availableModels.includes(model)) {
@@ -321,6 +370,7 @@ export const find = (req: Request, res: Response) =>
                 orderBy,
                 skip,
                 take,
+                ...(parsedSelect ? { select: parsedSelect } : {})
             })),
             query((prisma as any)[model].count({ where }))
         ]);
