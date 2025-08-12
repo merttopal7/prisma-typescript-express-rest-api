@@ -1,6 +1,9 @@
 import express, { Request, Response, Router } from 'express';
 import { ParsedQs } from 'qs';
 import { Prisma } from '../models/base.models'
+import { RoleManager } from '../services/role.service';
+import { relationToTable } from '../services/builder.service';
+import { transform } from '../controller/payload.controller';
 const { prisma, query, buildValidation } = Prisma;
 
 type FilterQuery = ParsedQs | { [key: string]: any };
@@ -83,40 +86,39 @@ function getDelegate<T extends ModelName>(model: T): (typeof prisma)[T] {
     return prisma[model];
 }
 
-const parseSelectParam = (selectParam?: string, model?: string): object | undefined => {
+const parseSelectParam = async (selectParam?: string, model?: string, userId?: number): Promise<any> => {
     if (!selectParam) return undefined;
     const result: any = {};
-
-    const fields = selectParam.split(',').map(f => f.trim()).filter(Boolean);
+    const fields: any = selectParam.split(',').map(f => f.trim()).filter(Boolean);
 
     for (const field of fields) {
-        let parts = field.split('.');
-
-        // Eğer başında model adı varsa kaldır
+        let parts = field.replaceAll(`${model}.`, ``).split('.');
         if (model && parts[0] === model) {
             parts.shift();
         }
 
         let current = result;
-
-        parts.forEach((part, idx) => {
+        let lastModelText: string = model as string;
+        let lastModel: any = {};
+        for (let idx = 0; idx < parts.length; idx++) {
+            const part = parts[idx];
+            if (relationToTable[lastModelText]) lastModel = relationToTable[lastModelText][part] ?? lastModel;
+            if (lastModel.fieldType) lastModelText = lastModel.fieldType[0]?.toLowerCase() + lastModel.fieldType?.substring(1);
+            const role = await RoleManager.can(userId as number, lastModelText);
+            if (!role.canRead) return { error: true, errorMessage: `Yo`, table: role.model };
             if (idx === parts.length - 1) {
-                // Son parçadaysak true olarak işaretle
                 current[part] = true;
             } else {
-                // İlişki var, select yapısı oluştur
                 if (!current[part]) {
                     current[part] = { select: {} };
-                } else if (current[part] === true) {
-                    // Önceden true yazılmışsa, nesneye dönüştür
+                } else if (current[part] === true)
                     current[part] = { select: {} };
-                }
                 current = current[part].select;
             }
-        });
+        }
     }
 
-    return result;
+    return { error: false, result };
 };
 
 
@@ -332,6 +334,12 @@ export const findById = (req: Request, res: Response) =>
     req.handle(async () => {
         const model = req.params.model;
         const id = req.params.id;
+        const userId = req.user?.userId ?? 0;
+        const role = await RoleManager.can(userId, model);
+        if (role && !role?.canRead) return res.status(403).json({
+            error: true,
+            errorMessage: `[${model}][read] You do not have access permission.`,
+        });
 
         const availableModels = getAvailableModels();
         if (!availableModels.includes(model)) {
@@ -342,15 +350,19 @@ export const findById = (req: Request, res: Response) =>
             });
         }
 
-        const parsedSelect = parseSelectParam(req.query?.select as string, model as string);
-
+        const parsedSelect = await parseSelectParam(req.query?.select as string, model as string, userId);
+        if (parsedSelect?.error) return res.status(403).json({
+            error: true,
+            errorMessage: `[${parsedSelect.table}][read] You do not have access permission.`,
+        });
+        const _parsedSelect = parsedSelect.result;
         const delegate = (prisma as any)[model];
 
         const data = await query(delegate.findUnique({
             where: {
                 id: isNaN(Number(id)) ? id : Number(id)
             },
-            ...(parsedSelect ? { select: parsedSelect } : {})
+            ...(_parsedSelect ? { select: _parsedSelect } : {})
         }));
 
         if (!data.data)
@@ -362,12 +374,22 @@ export const findById = (req: Request, res: Response) =>
 export const find = (req: Request, res: Response) =>
     req.handle(async () => {
         const { model } = req.params;
+        const userId = req.user?.userId ?? 0;
+        const role = await RoleManager.can(userId, model);
+        if (role && !role?.canRead) return res.status(403).json({
+            error: true,
+            errorMessage: `[${model}][read] You do not have access permission.`,
+        });
         const method = req.method;
         const filterQuery: FilterQuery = method === 'GET' ? (req.query as ParsedQs) : (req.body as { [key: string]: any });
         const { page = '1', limit = '10', sort, order = 'asc', filter, select, include } = filterQuery;
 
-        const parsedSelect = parseSelectParam(select as string, model as string);
-
+        const parsedSelect = await parseSelectParam(select as string, model as string, userId);
+        if (parsedSelect?.error) return res.status(403).json({
+            error: true,
+            errorMessage: `[${parsedSelect.table}][read] You do not have access permission.`,
+        });
+        const _parsedSelect = parsedSelect.result;
         const availableModels = getAvailableModels();
         if (!availableModels.includes(model)) {
             return res.status(400).json({
@@ -395,7 +417,7 @@ export const find = (req: Request, res: Response) =>
                 orderBy,
                 skip,
                 take,
-                ...(parsedSelect ? { select: parsedSelect } : {})
+                ...(_parsedSelect ? { select: _parsedSelect } : {})
             })),
             query((prisma as any)[model].count({ where }))
         ]);
@@ -426,6 +448,12 @@ export const models = (req: Request, res: Response) =>
 export const post = (req: Request, res: Response) =>
     req.handle(async () => {
         const { model } = req.params;
+        const userId = req.user?.userId ?? 0;
+        const role = await RoleManager.can(userId, model);
+        if (role && !role?.canCreate) return res.status(403).json({
+            error: true,
+            errorMessage: `[${model}][create] You do not have access permission.`,
+        });
         const availableModels = getAvailableModels();
         if (!availableModels.includes(model)) {
             return res.status(400).json({
@@ -433,6 +461,10 @@ export const post = (req: Request, res: Response) =>
                 errorMessage: `Model '${model}' not found.`,
                 availableModels
             });
+        }
+        if (transform[model] && transform[model].body) {
+            const customBody = await transform[model].body(req.body);
+            if (customBody) req.body = customBody;
         }
         const delegate = getDelegate(model as ModelName) as any;
         const build = buildValidation(delegate);
@@ -446,56 +478,91 @@ export const post = (req: Request, res: Response) =>
     })
 
 
+export const put = (req: Request, res: Response) =>
+    req.handle(async () => {
+        const { model } = req.params;
+        const id = req.params.id;
+        const userId = req.user?.userId ?? 0;
+        const role = await RoleManager.can(userId, model);
+        if (role && !role?.canUpdate) return res.status(403).json({
+            error: true,
+            errorMessage: `[${model}][update] You do not have access permission.`,
+        });
+        const availableModels = getAvailableModels();
+        if (!availableModels.includes(model)) {
+            return res.status(400).json({
+                error: true,
+                errorMessage: `Model '${model}' not found.`,
+                availableModels
+            });
+        }
+        const delegate = getDelegate(model as ModelName) as any;
+        const existData = await query(delegate.findUnique({ where: { id: +id } }))
+        if (existData.error) return res.status(400).json(existData);
+        if (!existData.data) return res.status(404).json({ error: true, errorMessage: `Not found ${model}!` });
+        const build = buildValidation(delegate);
+        const validatedData = build.validate({ ...existData.data, ...req.body });
+
+        const putResult = await query(delegate.update({
+            data: validatedData,
+            where: { id: +id }
+        }))
+        return res.status(putResult.error ? 500 : 200).json({
+            ...putResult
+        })
+    })
+
+
 export const createData = (req: Request, res: Response) =>
     req.handle(async () => {
-            // 1. Epin kategorisini oluştur
-            const epinCategory = await prisma.category.upsert({
-                where: { slug: 'epin' },
-                update: {},
-                create: {
-                    name: 'Epin',
-                    slug: 'epin',
-                },
-            });
+        // 1. Epin kategorisini oluştur
+        const epinCategory = await prisma.category.upsert({
+            where: { slug: 'epin' },
+            update: {},
+            create: {
+                name: 'Epin',
+                slug: 'epin',
+            },
+        });
 
-            // 2. Valorant kategorisini oluştur, parent olarak Epin'i ata
-            const valorantCategory = await prisma.category.upsert({
-                where: { slug: 'valorant' },
-                update: {},
-                create: {
-                    name: 'Valorant',
-                    slug: 'valorant',
-                    parentId: epinCategory.id,
-                },
-            });
+        // 2. Valorant kategorisini oluştur, parent olarak Epin'i ata
+        const valorantCategory = await prisma.category.upsert({
+            where: { slug: 'valorant' },
+            update: {},
+            create: {
+                name: 'Valorant',
+                slug: 'valorant',
+                parentId: epinCategory.id,
+            },
+        });
 
-            // Ürün isimleri ve fiyatları (örnek fiyatlar verdim, sen değiştirebilirsin)
-            const productsData = [
-                { name: '100VP', price: 1 },
-                { name: '200VP', price: 2 },
-                { name: '500VP', price: 5 },
-                { name: '1000VP', price: 10 },
-            ];
+        // Ürün isimleri ve fiyatları (örnek fiyatlar verdim, sen değiştirebilirsin)
+        const productsData = [
+            { name: '100VP', price: 1 },
+            { name: '200VP', price: 2 },
+            { name: '500VP', price: 5 },
+            { name: '1000VP', price: 10 },
+        ];
 
-            // Örnek ownerId (varsa kendi kullanıcı ID'n ile değiştir)
-            const ownerId = 1; // Burayı gerçek user id ile değiştir
+        // Örnek ownerId (varsa kendi kullanıcı ID'n ile değiştir)
+        const ownerId = 1; // Burayı gerçek user id ile değiştir
 
-            // Ürünleri oluştur ve her iki kategoriye bağla
-            for (const prod of productsData) {
-                // 3. Ürünü oluştur
-                const product = await prisma.product.create({
-                    data: {
-                        name: prod.name,
-                        price: prod.price,
-                        ownerId: ownerId,
-                        stock: 100, // örnek stok
-                        categories: {
-                            connect: [{ id: epinCategory.id }, { id: valorantCategory.id }],
-                        },
+        // Ürünleri oluştur ve her iki kategoriye bağla
+        for (const prod of productsData) {
+            // 3. Ürünü oluştur
+            const product = await prisma.product.create({
+                data: {
+                    name: prod.name,
+                    price: prod.price,
+                    ownerId: ownerId,
+                    stock: 100, // örnek stok
+                    categories: {
+                        connect: [{ id: epinCategory.id }, { id: valorantCategory.id }],
                     },
-                });
-                console.log(`Ürün oluşturuldu: ${product.name}`);
-            }
+                },
+            });
+            console.log(`Ürün oluşturuldu: ${product.name}`);
+        }
         return res.json({
             ok: 1
         })

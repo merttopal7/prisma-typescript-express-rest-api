@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { createPrismaSchemaBuilder } from '@mrleebo/prisma-ast';
 import prisma from '../loaders/prisma.loader';
+import { RoleManager, roleType } from './role.service';
 const schemaContent = fs.readFileSync(path.join('prisma', 'schema.prisma'), 'utf-8');
 const _builder = createPrismaSchemaBuilder(schemaContent);
 
@@ -20,15 +21,21 @@ const prismaToTS: Record<string, string> = {
 const createValidationsForSchema = (schemaName: string) => {
     const product = _builder.findByType('model', { name: schemaName });
     const validation: any = {};
+    const relations: any = {};
     product?.properties.forEach((property: any) => {
         const isId = (property.attributes ?? []).find((attr: any) => attr.name == "id");
         if (!isId && prismaToTS[property.fieldType]) validation[property.name] = {
             ...property,
             type: prismaToTS[property.fieldType],
             optional: property.optional
+        };
+        else if (!isId) {
+            const fieldType: string | undefined = property.fieldType;
+            if (fieldType)
+                relations[property.name] = property;
         }
     })
-    return validation
+    return { validation, relations }
 }
 const getAvailableModels = (): string[] => {
     return Object.keys(prisma).filter(key =>
@@ -62,7 +69,7 @@ export const query = async <T>(queryPromise: T) => await errorHandler(queryPromi
 export const buildValidation = (model: any) => {
     return {
         validate: (obj: any | boolean = false) => {
-            const schema = createValidationsForSchema(model.name);
+            const { validation: schema } = createValidationsForSchema(model.name);
             if (!obj || !schema) return;
             let object: any = {}
             Object.keys(schema).forEach(a => {
@@ -116,11 +123,13 @@ const dynamicRouteResponses = {
     }
 }
 export const swaggerDynamicRoutes: any = {}
+export const relationToTable: any = {}
 export const generateSwaggerSchema = () => {
     const availableModels = getAvailableModels().map((model: string) => [model.charAt(0).toUpperCase() + model.slice(1), model]);
     generateModelPermissions(availableModels);
     availableModels.forEach(([modelCapitalize, model]: any) => {
-        const validations = createValidationsForSchema(modelCapitalize);
+        const { validation: validations, relations } = createValidationsForSchema(modelCapitalize);
+        relationToTable[model] = relations;
         const requiredAttributes = Object.entries(validations).filter(([modelName, obj]: any) => !obj?.optional).map((obj: any) => obj[0]);
         const properties: any = {};
         Object.entries(validations).forEach((obj: any) => {
@@ -177,7 +186,7 @@ export const generateModelPermissions = async (models: any) => {
                     update: {},
                     create: exampleRoleBasedRule
                 }));
-                console.log("Add to Static Object",response)
+                if (!response.error) RoleManager.save(response.data as roleType);
             }
         }
     }
